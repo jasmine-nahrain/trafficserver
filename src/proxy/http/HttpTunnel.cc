@@ -1350,9 +1350,6 @@ HttpTunnel::producer_handler(int event, HttpTunnelProducer *p)
       if (c->alive && c->write_vio) {
         Dbg(dbg_ctl_http_redirect, "Read ready alive");
         c->write_vio->reenable();
-        if (!p->chunked_handler.dechunked_buffer->high_water() && p->read_vio->is_disabled()) {
-          p->read_vio->reenable();
-        }
       }
     }
     break;
