@@ -94,9 +94,10 @@ ChunkedHandler::init_by_action(IOBufferReader *buffer_in, Action action, bool dr
     chunked_size                       = 0;
     break;
   case Action::DECHUNK:
-    chunked_reader   = buffer_in->mbuf->clone_reader(buffer_in);
-    dechunked_buffer = new_MIOBuffer(BUFFER_SIZE_INDEX_256);
-    dechunked_size   = 0;
+    chunked_reader               = buffer_in->mbuf->clone_reader(buffer_in);
+    dechunked_buffer             = new_MIOBuffer(BUFFER_SIZE_INDEX_256);
+    dechunked_buffer->water_mark = buffer_in->mbuf->water_mark;
+    dechunked_size               = 0;
     break;
   case Action::PASSTHRU:
     chunked_reader = buffer_in->mbuf->clone_reader(buffer_in);
@@ -1289,6 +1290,16 @@ HttpTunnel::producer_handler(int event, HttpTunnelProducer *p)
     // This will update body_bytes_to_copy with the number of bytes copied.
     event = producer_handler_dechunked(event, p);
   } else if (p->do_dechunking || p->do_chunked_passthru) {
+    if (p->vc_type == HttpTunnelType_t::HTTP_SERVER && p->chunked_handler.dechunked_buffer && p->read_vio) {
+      if (p->chunked_handler.dechunked_buffer->high_water()) {
+        p->read_vio->disable();
+        Dbg(dbg_ctl_http_chunk, "We have reached the high water mark, need to stop reading from the server until the data has been "
+                                "passed onto the client.");
+        return sm_callback;
+      } else if (!p->chunked_handler.dechunked_buffer->high_water() && p->read_vio->is_disabled()) {
+        p->read_vio->reenable();
+      }
+    }
     // This will update body_bytes_to_copy with the number of bytes copied.
     event = producer_handler_chunked(event, p);
   } else {
@@ -1339,6 +1350,9 @@ HttpTunnel::producer_handler(int event, HttpTunnelProducer *p)
       if (c->alive && c->write_vio) {
         Dbg(dbg_ctl_http_redirect, "Read ready alive");
         c->write_vio->reenable();
+        if (!p->chunked_handler.dechunked_buffer->high_water() && p->read_vio->is_disabled()) {
+          p->read_vio->reenable();
+        }
       }
     }
     break;
